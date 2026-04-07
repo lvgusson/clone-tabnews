@@ -1,0 +1,104 @@
+[1mdiff --git a/infra/database.js b/infra/database.js[m
+[1mindex 20f2b95..f121e15 100644[m
+[1m--- a/infra/database.js[m
+[1m+++ b/infra/database.js[m
+[36m@@ -8,12 +8,20 @@[m [masync function query(queryObject) {[m
+     database: process.env.POSTGRES_DB,[m
+     password: process.env.POSTGRES_PASSWORD,[m
+   });[m
+[31m-  await client.connect();[m
+[32m+[m[32m  console.log("Credenciais do postgres:", {[m
+[32m+[m[32m    host: process.env.POSTGRES_HOST,[m
+[32m+[m[32m    port: process.env.POSTGRES_PORT,[m
+[32m+[m[32m    user: process.env.POSTGRES_USER,[m
+[32m+[m[32m    database: process.env.POSTGRES_DB,[m
+[32m+[m[32m    password: process.env.POSTGRES_PASSWORD,[m
+[32m+[m[32m  });[m
+   try {[m
+[32m+[m[32m    await client.connect();[m
+     const result = await client.query(queryObject);[m
+     return result;[m
+   } catch (error) {[m
+     console.log(error);[m
+[32m+[m[32m    throw error;[m
+   } finally {[m
+     await client.end();[m
+   }[m
+[1mdiff --git a/package.json b/package.json[m
+[1mindex 6f406f7..358f61d 100644[m
+[1m--- a/package.json[m
+[1m+++ b/package.json[m
+[36m@@ -5,9 +5,9 @@[m
+   "main": "index.js",[m
+   "scripts": {[m
+     "dev": "npm run services:up && next dev",[m
+[31m-    "services:up": "docker compose -f /infra/compose.yaml up -d",[m
+[31m-    "services:down": "docker compose -f /infra/compose.yaml down",[m
+[31m-    "services:stop": "docker compose -f /infra/compose.yaml stop",[m
+[32m+[m[32m    "services:up": "docker compose -f infra/compose.yaml up -d",[m
+[32m+[m[32m    "services:down": "docker compose -f infra/compose.yaml down -v",[m
+[32m+[m[32m    "services:stop": "docker compose -f infra/compose.yaml stop",[m
+     "lint:check": "prettier --check .",[m
+     "lint:fix": "prettier --write .",[m
+     "test": "jest",[m
+[1mdiff --git a/pages/api/v1/status/index.js b/pages/api/v1/status/index.js[m
+[1mindex b5adb8f..a845161 100644[m
+[1m--- a/pages/api/v1/status/index.js[m
+[1m+++ b/pages/api/v1/status/index.js[m
+[36m@@ -1,9 +1,35 @@[m
+ import database from "infra/database.js";[m
+ [m
+ async function status(req, res) {[m
+[31m-  const result = await database.query("SELECT 1 + 1 as sum");[m
+[31m-  console.log(result.rows);[m
+[31m-  res.status(200).json({ status: "ok" });[m
+[32m+[m[32m  const updatedAt = new Date().toISOString();[m
+[32m+[m
+[32m+[m[32m  const databaseVersionResult = await database.query("SHOW server_version;");[m
+[32m+[m[32m  const databaseVersionValue = databaseVersionResult.rows[0].server_version;[m
+[32m+[m
+[32m+[m[32m  const databaseMaxConnectionsResult = await database.query([m
+[32m+[m[32m    "SHOW max_connections;",[m
+[32m+[m[32m  );[m
+[32m+[m[32m  const databaseMaxConnectionsValue =[m
+[32m+[m[32m    databaseMaxConnectionsResult.rows[0].max_connections;[m
+[32m+[m
+[32m+[m[32m  const databaseName = process.env.POSTGRES_DB;[m
+[32m+[m[32m  const databaseOpenedConnectionsResult = await database.query({[m
+[32m+[m[32m    text: "SELECT count(*)::int FROM pg_stat_activity WHERE datname = $1",[m
+[32m+[m[32m    values: [databaseName],[m
+[32m+[m[32m  });[m
+[32m+[m[32m  const databaseOpenedConnectionsValue =[m
+[32m+[m[32m    databaseOpenedConnectionsResult.rows[0].count;[m
+[32m+[m
+[32m+[m[32m  res.status(200).json({[m
+[32m+[m[32m    updated_at: updatedAt,[m
+[32m+[m[32m    dependencies: {[m
+[32m+[m[32m      database: {[m
+[32m+[m[32m        version: databaseVersionValue,[m
+[32m+[m[32m        max_connections: parseInt(databaseMaxConnectionsValue),[m
+[32m+[m[32m        opened_connections: databaseOpenedConnectionsValue,[m
+[32m+[m[32m      },[m
+[32m+[m[32m    },[m
+[32m+[m[32m  });[m
+ }[m
+ [m
+ export default status;[m
+[1mdiff --git a/tests/integration/api/v1/status/get.test.js b/tests/integration/api/v1/status/get.test.js[m
+[1mindex 107b86f..01437b2 100644[m
+[1m--- a/tests/integration/api/v1/status/get.test.js[m
+[1m+++ b/tests/integration/api/v1/status/get.test.js[m
+[36m@@ -1,4 +1,13 @@[m
+ test("GET /api/v1/status should return 200", async () => {[m
+   const response = await fetch("http://localhost:3000/api/v1/status");[m
+   expect(response.status).toBe(200);[m
+[32m+[m
+[32m+[m[32m  const responseBody = await response.json();[m
+[32m+[m
+[32m+[m[32m  const parsedUpdatedAt = new Date(responseBody.updated_at).toISOString();[m
+[32m+[m[32m  expect(responseBody.updated_at).toBe(parsedUpdatedAt);[m
+[32m+[m
+[32m+[m[32m  expect(responseBody.dependencies.database.version).toEqual("16.13");[m
+[32m+[m[32m  expect(responseBody.dependencies.database.max_connections).toEqual(100);[m
+[32m+[m[32m  expect(responseBody.dependencies.database.opened_connections).toEqual(1);[m
+ });[m
